@@ -41,10 +41,26 @@
 #include "blk-mq-sched.h"
 #include "blk-rq-qos.h"
 
+#define CPU_CORES 192 // for manycore test
+
 static DEFINE_PER_CPU(struct llist_head, blk_cpu_done);
 
 static void blk_mq_poll_stats_start(struct request_queue *q);
 static void blk_mq_poll_stats_fn(struct blk_stat_callback *cb);
+
+//hybrid polling test
+char io_log_first_line[] = "algorithm,sleep_time,cpu_num,miss,timestamp\n";
+
+struct poll_io_log {
+	unsigned long sleep_time;
+};
+
+struct poll_io_log io_log_per_cpu[CPU_CORES];
+struct file* io_log_fp = NULL;
+int io_log_flag = 0;
+loff_t io_log_pos = 0;
+
+void write_log(int min_flag, struct poll_io_log *log, int cpu_num, int miss_flag);
 
 static int blk_mq_poll_stats_bkt(const struct request *rq)
 {
@@ -3260,6 +3276,9 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	 * Default to classic polling
 	 */
 	q->poll_nsec = BLK_MQ_POLL_CLASSIC;
+	q->poll_delay_divide = 2;
+	q->poll_delay_multiply = 1;
+	q->poll_sleep_min_flag = 0;
 
 	blk_mq_init_cpu_queues(q, set->nr_hw_queues);
 	blk_mq_add_queue_tag_set(set, q);
@@ -3766,6 +3785,8 @@ static unsigned long blk_mq_poll_nsecs(struct request_queue *q,
 {
 	unsigned long ret = 0;
 	int bucket;
+	int cpu_num;
+	struct poll_io_log log;
 
 	/*
 	 * If stats collection isn't on, don't sleep but turn it on for
@@ -3787,8 +3808,18 @@ static unsigned long blk_mq_poll_nsecs(struct request_queue *q,
 	if (bucket < 0)
 		return ret;
 
-	if (q->poll_stat[bucket].nr_samples)
-		ret = (q->poll_stat[bucket].mean + 1) / 2;
+	if (q->poll_stat[bucket].nr_samples){
+		if (q->poll_sleep_min_flag)
+			ret = (q->poll_stat[bucket].min + 1) * q->poll_delay_multiply / q->poll_delay_divide;
+		else
+			ret = (q->poll_stat[bucket].mean + 1) * q->poll_delay_multiply / q->poll_delay_divide;
+	}
+
+	if (io_log_flag){
+		cpu_num = blk_mq_rq_cpu(rq);
+		log.sleep_time = ret;
+		io_log_per_cpu[cpu_num] = log;
+	}
 
 	return ret;
 }
@@ -3887,6 +3918,10 @@ int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin)
 {
 	struct blk_mq_hw_ctx *hctx;
 	long state;
+	int cpu_num;
+	int poll_count = 0;
+	struct request *rq;
+	int miss;
 
 	if (!blk_qc_t_valid(cookie) ||
 	    !test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
@@ -3920,6 +3955,26 @@ int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin)
 		if (ret > 0) {
 			hctx->poll_success++;
 			__set_current_state(TASK_RUNNING);
+
+			// hybrid polling test
+			if (!blk_qc_t_is_internal(cookie))
+				rq = blk_mq_tag_to_rq(hctx->tags, blk_qc_t_to_tag(cookie));
+			else 
+				rq = blk_mq_tag_to_rq(hctx->sched_tags, blk_qc_t_to_tag(cookie));
+
+			if (!poll_count){
+				// io finished before wakeup(overslept)
+				miss = 1;
+			}else{
+				// io finished after wakeup(underslept)
+				miss = 0;
+			}
+
+			if (io_log_flag){
+				cpu_num = blk_mq_rq_cpu(rq);
+				write_log(q->poll_sleep_min_flag, &io_log_per_cpu[cpu_num], cpu_num, miss);
+			}
+
 			return ret;
 		}
 
@@ -3931,6 +3986,7 @@ int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin)
 		if (ret < 0 || !spin)
 			break;
 		cpu_relax();
+		poll_count++;
 	} while (!need_resched());
 
 	__set_current_state(TASK_RUNNING);
@@ -3943,6 +3999,50 @@ unsigned int blk_mq_rq_cpu(struct request *rq)
 	return rq->mq_ctx->cpu;
 }
 EXPORT_SYMBOL(blk_mq_rq_cpu);
+
+// hybrid polling test
+void init_io_log(void)
+{
+	io_log_fp = filp_open("/media/ramdisk/io_log.csv",  O_CREAT | O_TRUNC | O_WRONLY, 0666);
+	kernel_write(io_log_fp, io_log_first_line, strlen(io_log_first_line), &io_log_pos);
+	io_log_flag = 1;
+}
+EXPORT_SYMBOL(init_io_log);
+
+void end_io_log(void)
+{
+	io_log_flag = 0;
+	io_log_pos = 0;
+	filp_close(io_log_fp, NULL);
+}
+EXPORT_SYMBOL(end_io_log);
+
+void write_log(int min_flag, struct poll_io_log *log, int cpu_num, int miss_flag)
+{
+	/* algorithm_flag: mean = 0, min = 1 */
+	unsigned long timestamp = ktime_get_real_ns();
+	int algorithm_flag;
+	char write_buffer[500] = {0, };
+	char sleep_time_buffer[50] = {0, };
+	char cpu_num_buffer[10] = {0, };
+	char miss_buffer[5] = {0, };
+	char timestamp_buffer[50] = {0, };
+	algorithm_flag = min_flag;
+
+	sprintf(write_buffer, "%d,", algorithm_flag);
+	sprintf(sleep_time_buffer, "%lu,", log->sleep_time);
+	sprintf(cpu_num_buffer, "%d,", cpu_num);
+	sprintf(miss_buffer, "%d,", miss_flag);
+	sprintf(timestamp_buffer, "%lu\n", timestamp);
+
+	strcat(write_buffer, sleep_time_buffer);
+	strcat(write_buffer, cpu_num_buffer);
+	strcat(write_buffer, miss_buffer);
+	strcat(write_buffer, timestamp_buffer);
+
+	kernel_write(io_log_fp, write_buffer, strlen(write_buffer), &io_log_pos);
+}
+
 
 static int __init blk_mq_init(void)
 {

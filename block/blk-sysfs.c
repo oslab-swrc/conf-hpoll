@@ -420,6 +420,86 @@ static ssize_t queue_poll_delay_store(struct request_queue *q, const char *page,
 	return count;
 }
 
+static ssize_t queue_poll_delay_divide_show(struct request_queue *q, char *page)
+{
+	int val = q->poll_delay_divide;
+
+	return sprintf(page, "%d\n", val);
+}
+
+static ssize_t queue_poll_delay_divide_store(struct request_queue *q, const char *page,
+				size_t count)
+{
+	int err, val;
+
+	if (!q->mq_ops || !q->mq_ops->poll)
+		return -EINVAL;
+
+	err = kstrtoint(page, 10, &val);
+	if (err < 0)
+		return err;
+
+	if (val <= 0)
+		return -EINVAL;
+	else
+		q->poll_delay_divide = val;
+
+	return count;
+}
+static ssize_t queue_poll_delay_multiply_show(struct request_queue *q, char *page)
+{
+	int val = q->poll_delay_multiply;
+
+	return sprintf(page, "%d\n", val);
+}
+
+static ssize_t queue_poll_delay_multiply_store(struct request_queue *q, const char *page,
+				size_t count)
+{
+	int err, val;
+
+	if (!q->mq_ops || !q->mq_ops->poll)
+		return -EINVAL;
+
+	err = kstrtoint(page, 10, &val);
+	if (err < 0)
+		return err;
+
+	if (val < 0)
+		return -EINVAL;
+	else
+		q->poll_delay_multiply = val;
+
+	return count;
+}
+
+static ssize_t queue_poll_sleep_min_flag_show(struct request_queue *q, char *page)
+{
+	int val = q->poll_sleep_min_flag;
+
+	return sprintf(page, "%d\n", val);
+}
+
+static ssize_t queue_poll_sleep_min_flag_store(struct request_queue *q, const char *page,
+				size_t count)
+{
+	int err, val;
+
+	if (!q->mq_ops || !q->mq_ops->poll)
+		return -EINVAL;
+
+	err = kstrtoint(page, 10, &val);
+	if (err < 0)
+		return err;
+
+	if (val == 0 || val == 1)
+		q->poll_sleep_min_flag = val;
+	else
+		return -EINVAL;
+
+	return count;
+}
+
 static ssize_t queue_poll_show(struct request_queue *q, char *page)
 {
 	return queue_var_show(test_bit(QUEUE_FLAG_POLL, &q->queue_flags), page);
@@ -610,6 +690,9 @@ QUEUE_RW_ENTRY(queue_nomerges, "nomerges");
 QUEUE_RW_ENTRY(queue_rq_affinity, "rq_affinity");
 QUEUE_RW_ENTRY(queue_poll, "io_poll");
 QUEUE_RW_ENTRY(queue_poll_delay, "io_poll_delay");
+QUEUE_RW_ENTRY(queue_poll_delay_divide, "io_poll_delay_divide");
+QUEUE_RW_ENTRY(queue_poll_delay_multiply, "io_poll_delay_multiply");
+QUEUE_RW_ENTRY(queue_poll_sleep_min_flag, "hybrid_poll_sleep_min_flag");
 QUEUE_RW_ENTRY(queue_wc, "write_cache");
 QUEUE_RO_ENTRY(queue_fua, "fua");
 QUEUE_RO_ENTRY(queue_dax, "dax");
@@ -672,6 +755,9 @@ static struct attribute *queue_attrs[] = {
 	&queue_dax_entry.attr,
 	&queue_wb_lat_entry.attr,
 	&queue_poll_delay_entry.attr,
+	&queue_poll_delay_divide_entry.attr,
+	&queue_poll_delay_multiply_entry.attr,
+	&queue_poll_sleep_min_flag_entry.attr,
 	&queue_io_timeout_entry.attr,
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	&blk_throtl_sample_time_entry.attr,
