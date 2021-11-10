@@ -41,6 +41,14 @@
 #include "blk-mq-sched.h"
 #include "blk-rq-qos.h"
 
+#define CPU_CORES 192
+
+static char log_first_line[] = "io_time,timestamp";
+static struct file* log_files[CPU_CORES];
+static int io_log_flag = 0;
+static loff_t log_positions[CPU_CORES];
+void write_log(u64 io_time, int cpu_num);
+
 static DEFINE_PER_CPU(struct llist_head, blk_cpu_done);
 
 static void blk_mq_poll_stats_start(struct request_queue *q);
@@ -3887,6 +3895,10 @@ int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin)
 {
 	struct blk_mq_hw_ctx *hctx;
 	long state;
+	struct request *rq;
+	int cpu_num;
+
+	// u64 io_start_time = ktime_get_ns();
 
 	if (!blk_qc_t_valid(cookie) ||
 	    !test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
@@ -3919,6 +3931,13 @@ int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin)
 		ret = q->mq_ops->poll(hctx);
 		if (ret > 0) {
 			hctx->poll_success++;
+			if (!blk_qc_t_is_internal(cookie))
+				rq = blk_mq_tag_to_rq(hctx->tags, blk_qc_t_to_tag(cookie));
+			else 
+				rq = blk_mq_tag_to_rq(hctx->sched_tags, blk_qc_t_to_tag(cookie));
+			cpu_num = blk_mq_rq_cpu(rq);
+			// printk("I/O Time: %llu, cpu: %d\n", ktime_get_ns() - rq->start_time_ns, cpu_num);
+			write_log(ktime_get_ns() - rq->start_time_ns, cpu_num);
 			__set_current_state(TASK_RUNNING);
 			return ret;
 		}
@@ -3943,6 +3962,54 @@ unsigned int blk_mq_rq_cpu(struct request *rq)
 	return rq->mq_ctx->cpu;
 }
 EXPORT_SYMBOL(blk_mq_rq_cpu);
+
+void init_io_log(void)
+{
+	int i;
+	char filename[] = "/media/ramdisk/simulator_log_";
+	for(i=0;i<CPU_CORES;i++){
+		char buffer[100] = {0, };
+        char core_buffer[10] = {0, };
+		log_positions[i] = 0;
+
+        sprintf(core_buffer, "%d", i);
+        strcat(buffer, filename);
+        strcat(buffer, core_buffer);
+		strcat(buffer, ".csv");
+		log_files[i] = filp_open(buffer,  O_CREAT | O_TRUNC | O_WRONLY, 0666);
+		kernel_write(log_files[i], log_first_line, strlen(log_first_line), &log_positions[i]);
+	}
+	io_log_flag = 1;
+}
+EXPORT_SYMBOL(init_io_log);
+
+void end_io_log(void)
+{
+	int i;
+	io_log_flag = 0;
+
+	for(i=0;i<CPU_CORES;i++){
+		log_positions[i] = 0;
+		filp_close(log_files[i], NULL);
+	}
+}
+EXPORT_SYMBOL(end_io_log);
+
+void write_log(u64 io_time, int cpu_num)
+{
+	char write_buffer[500] = {0, };
+	char io_time_buffer[100] = {0, };
+	char timestamp_buffer[100] = {0, };
+	u64 timestamp = ktime_get_real_ns();
+
+	sprintf(io_time_buffer, "%llu,", io_time);
+	sprintf(timestamp_buffer, "%llu\n", timestamp);
+
+	strcat(write_buffer, io_time_buffer);
+	strcat(write_buffer, timestamp_buffer);
+
+	kernel_write(log_files[cpu_num], write_buffer, strlen(write_buffer), &log_positions[cpu_num]);
+}
 
 static int __init blk_mq_init(void)
 {
