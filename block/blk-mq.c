@@ -3937,7 +3937,8 @@ int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin)
 				rq = blk_mq_tag_to_rq(hctx->sched_tags, blk_qc_t_to_tag(cookie));
 			cpu_num = blk_mq_rq_cpu(rq);
 			// printk("I/O Time: %llu, cpu: %d\n", ktime_get_ns() - rq->start_time_ns, cpu_num);
-			write_log(ktime_get_ns() - rq->start_time_ns, cpu_num);
+			if (io_log_flag)
+				write_log(ktime_get_ns() - rq->start_time_ns, cpu_num);
 			__set_current_state(TASK_RUNNING);
 			return ret;
 		}
