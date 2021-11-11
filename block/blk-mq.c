@@ -43,7 +43,7 @@
 
 #define CPU_CORES 192
 
-static char log_first_line[] = "io_time,timestamp";
+static char log_first_line[] = "io_time,timestamp\n";
 static struct file* log_files[CPU_CORES];
 static int io_log_flag = 0;
 static loff_t log_positions[CPU_CORES];
