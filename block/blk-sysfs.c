@@ -1,4 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
+// Configurable hybrid polling
+// This improvement enables configuring the sleep duration decision logic of hybrid polling.
+// Configurable parameters include: (1) mode (default: mean) (2) sleep ratio (default: 50%), and (3) update period (default: 100 ms).
+// SPDX-FileCopyrightText: Copyright (c) 2021 Kookmin University
+
 /*
  * Functions related to sysfs handling
  */
