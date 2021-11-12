@@ -18,6 +18,9 @@
 #include "blk-mq-debugfs.h"
 #include "blk-wbt.h"
 
+extern void init_io_log(void);
+extern void end_io_log(void);
+
 struct queue_sysfs_entry {
 	struct attribute attr;
 	ssize_t (*show)(struct request_queue *, char *);
@@ -420,6 +423,42 @@ static ssize_t queue_poll_delay_store(struct request_queue *q, const char *page,
 	return count;
 }
 
+static ssize_t queue_poll_logging_flag_show(struct request_queue *q, char *page)
+{
+	int val = q->poll_logging_flag;
+
+	return sprintf(page, "%d\n", val);
+}
+
+static ssize_t queue_poll_logging_flag_store(struct request_queue *q, const char *page,
+				size_t count)
+{
+	int err, val;
+
+	if (!q->mq_ops || !q->mq_ops->poll)
+		return -EINVAL;
+
+	err = kstrtoint(page, 10, &val);
+	if (err < 0)
+		return err;
+
+	if (val == 0){
+		if (q->poll_logging_flag != 0){
+			q->poll_logging_flag = val;
+			end_io_log();
+		}
+	}else if (val == 1){
+		if (q->poll_logging_flag != 1){
+			q->poll_logging_flag = val;
+			init_io_log();
+		}
+	}
+	else{
+		return -EINVAL;
+	}
+	return count;
+}
+
 static ssize_t queue_poll_show(struct request_queue *q, char *page)
 {
 	return queue_var_show(test_bit(QUEUE_FLAG_POLL, &q->queue_flags), page);
@@ -610,6 +649,7 @@ QUEUE_RW_ENTRY(queue_nomerges, "nomerges");
 QUEUE_RW_ENTRY(queue_rq_affinity, "rq_affinity");
 QUEUE_RW_ENTRY(queue_poll, "io_poll");
 QUEUE_RW_ENTRY(queue_poll_delay, "io_poll_delay");
+QUEUE_RW_ENTRY(queue_poll_logging_flag, "io_poll_logging");
 QUEUE_RW_ENTRY(queue_wc, "write_cache");
 QUEUE_RO_ENTRY(queue_fua, "fua");
 QUEUE_RO_ENTRY(queue_dax, "dax");
@@ -672,6 +712,7 @@ static struct attribute *queue_attrs[] = {
 	&queue_dax_entry.attr,
 	&queue_wb_lat_entry.attr,
 	&queue_poll_delay_entry.attr,
+	&queue_poll_logging_flag_entry.attr,
 	&queue_io_timeout_entry.attr,
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	&blk_throtl_sample_time_entry.attr,

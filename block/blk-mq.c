@@ -3272,6 +3272,8 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	 */
 	q->poll_nsec = BLK_MQ_POLL_CLASSIC;
 
+	q->poll_logging_flag = 0;
+
 	blk_mq_init_cpu_queues(q, set->nr_hw_queues);
 	blk_mq_add_queue_tag_set(set, q);
 	blk_mq_map_swqueue(q);
@@ -3984,6 +3986,7 @@ void init_io_log(void)
 		kernel_write(log_files[i], log_first_line, strlen(log_first_line), &log_positions[i]);
 	}
 	io_log_flag = 1;
+	printk("Logging Enabled\n");
 }
 EXPORT_SYMBOL(init_io_log);
 
@@ -3996,6 +3999,7 @@ void end_io_log(void)
 		log_positions[i] = 0;
 		filp_close(log_files[i], NULL);
 	}
+	printk("Logging Disabled\n");
 }
 EXPORT_SYMBOL(end_io_log);
 
