@@ -26,6 +26,11 @@ Branch for getting log
 
 For more information, refer to [Hybrid Polling Simulator](https://github.com/oslab-swrc/hybrid_polling_sim).
 
+- Requirement List
+  - Multi device logging
+    - Currently, the kernel can logging only one device. (Otherwise, logs are mixed in one file.)
+    - If there are needs for multi device logging, logs are have to split logs by devices.
+
 
 
 ## License
